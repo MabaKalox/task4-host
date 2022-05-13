@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>title</title>
+    <script>
+        class WasiAPI {
+            usize_size = 4;
+            ArrayHolderType = Uint32Array;
+
+            constructor(memory, alloc, dealloc) {
+                this.memory = memory;
+                this.alloc = alloc;
+                this.dealloc = dealloc;
+            }
+
+            to_FFI_string(string) {
+                const encoder = new TextEncoder()
+                const bytes = encoder.encode(string)
+                // Copy the string into memory allocated in the WebAssembly
+                const buf_size = bytes.byteLength;
+                const ptr = this.alloc(buf_size)
+                const buffer = new Uint8Array(this.memory.buffer, ptr, buf_size)
+                buffer.set(bytes)
+                return [ptr, buf_size]
+            }
+
+            from_FFI_string(ptr, size) {
+                try {
+                    const array = new Uint8Array(this.memory.buffer, ptr, size)
+                    const decoder = new TextDecoder()
+                    return decoder.decode(array)
+                } finally {
+                    // Free the memory sent to use from the WebAssembly instance.
+                    this.dealloc(ptr, size)
+                }
+            }
+
+            from_FFI_usize(ptr) {
+                try {
+                    const array = new this.ArrayHolderType(this.memory.buffer, ptr, 1)
+                    return array[0];
+                } finally {
+                    // Free the memory sent to use from the WebAssembly instance.
+                    this.dealloc(ptr, this.usize_size)
+                }
+            }
+
+            to_FFI_usize(num = 0) {
+                const ptr = this.alloc(this.usize_size);
+                const array = new this.ArrayHolderType(this.memory.buffer, ptr, 1)
+                array[0] = num;
+
+                return ptr;
+            }
+        }
+
+        const createInstance = async () => {
+            const path = './task4.wasm';
+            const response = await fetch(path);
+            const bytes = await response.arrayBuffer();
+            const {instance} = await WebAssembly.instantiate(bytes, {});
+
+            return instance;
+        };
+
+        const dijkstra_algorithm = async (algo_in) => {
+            const instance = await createInstance();
+            const memory = instance.exports.memory;
+            const api = new WasiAPI(memory, instance.exports.w_alloc, instance.exports.w_dealloc);
+
+            const [in_buf, in_buf_size] = api.to_FFI_string(algo_in);
+            const out_buf_size_ptr = api.to_FFI_usize();
+            const out_buf = instance.exports.dijkstra_algorithm(in_buf, in_buf_size, out_buf_size_ptr);
+            api.from_FFI_string(in_buf, in_buf_size);
+            return api.from_FFI_string(out_buf, api.from_FFI_usize(out_buf_size_ptr));
+        };
+
+        const perform_calc = async () => {
+            const input = document.getElementById("user_input").value;
+            const out = await dijkstra_algorithm(input);
+            let formatted_out = "";
+            const out_array = out.split("\n");
+            if (out_array.length > 1) {
+                formatted_out += "distance: " + out_array[0] + "<br>";
+                formatted_out += "path: " + out_array[1] + "<br>";
+                formatted_out += "nodes visited: " + out_array[2];
+            }
+            document.getElementById("output").innerHTML = formatted_out;
+        }
+    </script>
+</head>
+<body>
+<div style="display: flex; flex-direction: column">
+    <label for="user_input"></label><textarea id="user_input" rows="30"></textarea>
+    <button id="calc_btn" onclick="perform_calc()">Calculate</button>
+    <div id="output" style="height: 10em; border: 1px solid gray"></div>
+</div>
+</body>
+</html>
